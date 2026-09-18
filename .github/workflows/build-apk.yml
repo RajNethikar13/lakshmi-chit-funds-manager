@@ -22,7 +22,7 @@ jobs:
 
       - name: Create Flutter project
         run: |
-          flutter create --platforms=android --org com.lakshmi.chit .
+          flutter create --project-name lakshmi_chit_funds_manager --platforms=android --org com.lakshmi.chit .
           cp db.dart lib/db.dart
           cp main.dart lib/main.dart
 
