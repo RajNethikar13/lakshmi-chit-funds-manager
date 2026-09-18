@@ -194,11 +194,50 @@ class _MemberDetail extends State<MemberDetail>{
       Row(children:[Expanded(child:Card(child:ListTile(title:const Text('Received'),subtitle:Text(money(received))))),Expanded(child:Card(child:ListTile(title:const Text('Outstanding'),subtitle:Text(money(outstanding)))))]),
       FilledButton.icon(onPressed:lift,icon:const Icon(Icons.payments),label:Text(liftMonth==null?'Record Chit Lift':'Edit Chit Lift')),
       const SizedBox(height:10),const Text('Monthly Payments',style:TextStyle(fontSize:22,fontWeight:FontWeight.bold)),
-      ...List.generate(months,(i){
-        final no=i+1,xs=ps.where((x)=>x['month_no']==no).toList(),p=xs.isEmpty?null:xs.first;
-        final a=p==null?0:p['paid_amount'] as int,st=p==null?'Pending':p['status'] as String,bal=install-a;
-        return Card(child:ListTile(onTap:()=>pay(no),leading:CircleAvatar(child:Text('$no')),title:Text('Month $no • Due ${money(install)}'),subtitle:Text(st=='Paid'?'Paid ${money(a)}':st=='Partial'?'Partial ${money(a)} • Balance ${money(bal)}':'Pending'),trailing:Icon(st=='Paid'?Icons.check_circle:st=='Partial'?Icons.timelapse:Icons.radio_button_unchecked,color:st=='Paid'?Colors.green:st=='Partial'?Colors.orange:Colors.grey)));
-      }),
+      ...List.generate(months, (i) {
+  final no = i + 1;
+  final matches = ps.where((x) => x['month_no'] == no).toList();
+  final p = matches.isEmpty ? null : matches.first;
+
+  final a = p == null ? 0 : p['paid_amount'] as int;
+  final st = p == null ? 'Pending' : p['status'] as String;
+  final bal = install - a;
+
+  String statusText;
+  IconData statusIcon;
+  Color statusColor;
+
+  if (st == 'Paid') {
+    statusText = 'Paid ${money(a)}';
+    statusIcon = Icons.check_circle;
+    statusColor = Colors.green;
+  } else if (st == 'Partial') {
+    statusText = 'Partial ${money(a)} • Balance ${money(bal)}';
+    statusIcon = Icons.timelapse;
+    statusColor = Colors.orange;
+  } else {
+    statusText = 'Pending';
+    statusIcon = Icons.radio_button_unchecked;
+    statusColor = Colors.grey;
+  }
+
+  return Card(
+    child: ListTile(
+      onTap: () => pay(no),
+      leading: CircleAvatar(
+        child: Text('$no'),
+      ),
+      title: Text(
+        'Month $no • Due ${money(install)}',
+      ),
+      subtitle: Text(statusText),
+      trailing: Icon(
+        statusIcon,
+        color: statusColor,
+      ),
+    ),
+  );
+}),
       Text('Remaining scheduled months after lift: ${months-(liftMonth??0)}',style:const TextStyle(fontWeight:FontWeight.bold))
     ]);
   }
@@ -231,12 +270,44 @@ class AnalysisPage extends StatelessWidget{
   const AnalysisPage({super.key});
   @override Widget build(BuildContext c)=>FutureBuilder<Map<String,int>>(future:AppDb.instance.dashboard(),builder:(c,s){
     final d=s.data??{},net=(d['received']??0)-(d['given']??0);
-    return ListView(padding:const EdgeInsets.all(12),children:[
-      const Text('Business Analysis',style:TextStyle(fontSize:27,fontWeight:FontWeight.bold)),
-      Card(child:ListTile(title:const Text('Total received'),trailing:Text(money(d['received']??0)))),
-      Card(child:ListTile(title:const Text('Total given out'),trailing:Text(money(d['given']??0)))),
-      Card(child:ListTile(title:const Text('Cash movement'),subtitle:const Text('Received minus payouts; not final accounting profit.'),trailing:Text(money(net)))),
-      Card(child:ListTile(title:const Text('Outstanding installments'),trailing:Text(money(d['outstanding']??0)))),
-    ];
-  });
+    return ListView(
+  padding: const EdgeInsets.all(12),
+  children: [
+    const Text(
+      'Business Analysis',
+      style: TextStyle(
+        fontSize: 27,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+    Card(
+      child: ListTile(
+        title: const Text('Total received'),
+        trailing: Text(money(d['received'] ?? 0)),
+      ),
+    ),
+    Card(
+      child: ListTile(
+        title: const Text('Total given out'),
+        trailing: Text(money(d['given'] ?? 0)),
+      ),
+    ),
+    Card(
+      child: ListTile(
+        title: const Text('Cash movement'),
+        subtitle: const Text(
+          'Received minus payouts; not final accounting profit.',
+        ),
+        trailing: Text(money(net)),
+      ),
+    ),
+    Card(
+      child: ListTile(
+        title: const Text('Outstanding installments'),
+        trailing: Text(money(d['outstanding'] ?? 0)),
+      ),
+    ),
+  ],
+);
+});
 }
