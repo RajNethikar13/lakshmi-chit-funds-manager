@@ -13,6 +13,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Backup app files
+        run: |
+          cp pubspec.yaml /tmp/pubspec.yaml
+          cp main.dart /tmp/main.dart
+          cp db.dart /tmp/db.dart
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -20,12 +26,19 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create Android Flutter project
+      - name: Create Android project
         run: |
           flutter create \
             --project-name lakshmi_chit_funds_manager \
             --platforms=android \
             --org com.lakshmi.chit .
+
+      - name: Restore app source
+        run: |
+          cp /tmp/pubspec.yaml pubspec.yaml
+          mkdir -p lib
+          cp /tmp/main.dart lib/main.dart
+          cp /tmp/db.dart lib/db.dart
 
       - name: Get dependencies
         run: flutter pub get
@@ -36,5 +49,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: lakshmi-chit-manager-apk-v2
+          name: lakshmi-chit-manager-apk
           path: build/app/outputs/flutter-apk/app-release.apk
