@@ -1,17 +1,18 @@
-# Lakshmi Chit Manager — Buildable V1 Prototype
+# Lakshmi Chit Manager V2
+Interactive offline chit-fund prototype.
 
-This is the source for a personal Android chit-fund manager.
-
-The GitHub Actions workflow creates the missing Android/Gradle project automatically in the build environment, so you do not need Android Studio or a PC.
-
-Core prototype:
-- 25-month ₹16,000 template based on the supplied scheme
-- reusable scheme templates
-- chit groups
-- customer/member records
-- WhatsApp reminder launch
-- offline SQLite database
-- dashboard
-- basic cash/collection analysis
-
-The next iteration will add the complete payment matrix, chit-lift/payout records, remaining months, overdue +2-day reminders, bulk messaging, expenses, penalties, auction/dividend accounting, profit analysis, backup/restore and PIN lock.
+New in V2:
+- Tap a group to open it
+- Tap a member to open their profile
+- Add, edit and delete groups
+- Add, edit and delete members
+- Add, edit and delete scheme templates
+- Member monthly payment screen
+- Paid / Partial / Pending status
+- Amount received and balance
+- Payment mode
+- Chit lift month and amount given
+- Remaining scheduled months
+- WhatsApp reminder launcher
+- SQLite local database
+- Basic business analysis
