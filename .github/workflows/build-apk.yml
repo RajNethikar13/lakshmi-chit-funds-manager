@@ -20,13 +20,14 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create Flutter project
+      - name: Create Android Flutter project
         run: |
-          flutter create --project-name lakshmi_chit_funds_manager --platforms=android --org com.lakshmi.chit .
-          cp db.dart lib/db.dart
-          cp main.dart lib/main.dart
+          flutter create \
+            --project-name lakshmi_chit_funds_manager \
+            --platforms=android \
+            --org com.lakshmi.chit .
 
-      - name: Install dependencies
+      - name: Get dependencies
         run: flutter pub get
 
       - name: Build APK
@@ -35,5 +36,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: lakshmi-chit-manager-apk
+          name: lakshmi-chit-manager-apk-v2
           path: build/app/outputs/flutter-apk/app-release.apk
