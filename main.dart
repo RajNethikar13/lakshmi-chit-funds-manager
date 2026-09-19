@@ -74,11 +74,9 @@ Future<void> exportExcel(BuildContext context, String scope) async {
       addExcelSheet(excel, 'Payments', ['id','member_id','month_no','due_amount','paid_amount','paid_date','status','mode','notes'], data['payments'] ?? []);
       addExcelSheet(excel, 'Ledger', ['id','type','amount','date','member_id','group_id','category','notes'], data['ledger'] ?? []);
     }
-    if (scope == 'Full Backup' || scope == 'Schemes') {
+    if (scope == 'Schemes') {
       addExcelSheet(excel, 'Templates', ['id','name','months','members','installment','due_day','max_payout'], data['templates'] ?? []);
-      if (scope == 'Schemes') {
-        addExcelSheet(excel, 'Groups', ['id','name','template_id','start_date'], data['groups_tbl'] ?? []);
-      }
+      addExcelSheet(excel, 'Groups', ['id','name','template_id','start_date'], data['groups_tbl'] ?? []);
     }
 
     if (scope == 'Analysis') {
@@ -134,7 +132,10 @@ Future<void> importExcel(BuildContext context) async {
       final sheet = excel.tables[name]!;
       if (sheet.rows.isEmpty) return [];
       final headers = sheet.rows.first.map(excelText).toList();
-      return sheet.rows.skip(1).where((r) => r.any((c) => excelText(c).trim().isNotEmpty)).map((r) {
+
+      final rows = sheet.rows.skip(1)
+          .where((r) => r.any((c) => excelText(c).trim().isNotEmpty))
+          .map((r) {
         final out = <String, Object?>{};
         for (var i = 0; i < headers.length; i++) {
           final h = headers[i];
@@ -144,6 +145,19 @@ Future<void> importExcel(BuildContext context) async {
         }
         return out;
       }).toList();
+
+      // Older Full Backup files may contain the Templates sheet twice.
+      // IDs are database primary keys, so ignore duplicate IDs while restoring.
+      if (rows.isNotEmpty && rows.first.containsKey('id')) {
+        final seen = <int>{};
+        return rows.where((row) {
+          final id = int.tryParse(row['id']?.toString().trim() ?? '');
+          if (id == null) return true;
+          return seen.add(id);
+        }).toList();
+      }
+
+      return rows;
     }
 
     final templates = readSheet('Templates');
