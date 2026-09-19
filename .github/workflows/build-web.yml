@@ -62,8 +62,20 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Setup SQLite Web files
+        run: |
+          dart run sqflite_common_ffi_web:setup --force
+
+      - name: Verify SQLite Web files
+        run: |
+          ls -lh web/sqlite3.wasm
+          ls -lh web/sqflite_sw.js
+
       - name: Build Flutter Web
-        run: flutter build web --release --base-href "/lakshmi-chit-funds-manager/"
+        run: |
+          flutter build web \
+            --release \
+            --base-href "/lakshmi-chit-funds-manager/"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
