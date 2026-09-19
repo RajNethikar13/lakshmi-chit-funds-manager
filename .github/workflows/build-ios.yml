@@ -1,0 +1,59 @@
+name: Build iOS Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ios-development
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Backup app files
+        run: |
+          cp pubspec.yaml /tmp/pubspec.yaml
+          cp main.dart /tmp/main.dart
+          cp db.dart /tmp/db.dart
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: Create iOS project
+        run: |
+          flutter create \
+            --project-name lakshmi_chit_funds_manager \
+            --platforms=ios \
+            --org com.lakshmi.chit .
+
+      - name: Restore app source
+        run: |
+          cp /tmp/pubspec.yaml pubspec.yaml
+          mkdir -p lib
+          cp /tmp/main.dart lib/main.dart
+          cp /tmp/db.dart lib/db.dart
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build iOS without signing
+        run: flutter build ios --release --no-codesign
+
+      - name: Package iOS build for inspection
+        run: |
+          cd build/ios/iphoneos
+          zip -r ../../../../lakshmi_chit_manager_ios_build.zip Runner.app
+
+      - name: Upload iOS build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lakshmi-chit-manager-ios-build
+          path: lakshmi_chit_manager_ios_build.zip
