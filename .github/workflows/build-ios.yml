@@ -47,10 +47,10 @@ jobs:
       - name: Build iOS without signing
         run: flutter build ios --release --no-codesign
 
-      - name: Package iOS build for inspection
+      - name: Create iOS build ZIP
         run: |
-          cd build/ios/iphoneos
-          zip -r ../../../../lakshmi_chit_manager_ios_build.zip Runner.app
+          zip -r lakshmi_chit_manager_ios_build.zip \
+            build/ios/iphoneos/Runner.app
 
       - name: Upload iOS build artifact
         uses: actions/upload-artifact@v4
