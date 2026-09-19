@@ -1,0 +1,86 @@
+name: Build and Deploy Web
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - web-development
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Backup app files
+        run: |
+          cp pubspec.yaml /tmp/pubspec.yaml
+          cp main.dart /tmp/main.dart
+          cp db.dart /tmp/db.dart
+          cp db_platform.dart /tmp/db_platform.dart
+          cp db_platform_io.dart /tmp/db_platform_io.dart
+          cp db_platform_web.dart /tmp/db_platform_web.dart
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: Enable Flutter Web
+        run: flutter config --enable-web
+
+      - name: Create Flutter Web project
+        run: |
+          flutter create \
+            --project-name lakshmi_chit_funds_manager \
+            --platforms=web \
+            --org com.lakshmi.chit .
+
+      - name: Restore app source
+        run: |
+          cp /tmp/pubspec.yaml pubspec.yaml
+          mkdir -p lib
+          cp /tmp/main.dart lib/main.dart
+          cp /tmp/db.dart lib/db.dart
+          cp /tmp/db_platform.dart lib/db_platform.dart
+          cp /tmp/db_platform_io.dart lib/db_platform_io.dart
+          cp /tmp/db_platform_web.dart lib/db_platform_web.dart
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Flutter Web
+        run: flutter build web --release --base-href "/lakshmi-chit-funds-manager/"
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
