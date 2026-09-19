@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cross_file/cross_file.dart';
@@ -100,7 +98,7 @@ Future<void> exportExcel(BuildContext context, String scope) async {
     final safe = scope.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
     final name = 'lakshmi_chit_${safe}_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.xlsx';
     await Share.shareXFiles(
-      [XFile.fromData(Uint8List.fromList(bytes), mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+      [XFile.fromData(bytes, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
       text: 'Lakshmi Chit Manager - $scope',
       fileNameOverrides: [name],
     );

@@ -1,5 +1,5 @@
-import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
+import 'db_platform.dart';
 
 class AppDb {
   AppDb._();
@@ -8,9 +8,7 @@ class AppDb {
   Database get db => _db!;
 
   Future<void> init() async {
-    final p = join(await getDatabasesPath(), 'lakshmi_chit_manager.db');
-    _db = await openDatabase(
-      p,
+    _db = await openAppDatabase(
       version: 3,
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE templates(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,months INTEGER NOT NULL,members INTEGER NOT NULL,installment INTEGER NOT NULL,due_day INTEGER NOT NULL,max_payout INTEGER NOT NULL DEFAULT 0)');
