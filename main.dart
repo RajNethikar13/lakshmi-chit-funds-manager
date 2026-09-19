@@ -1177,9 +1177,7 @@ class _Templates extends State<TemplatesPage> {
     }
   }
 
-  Future<void> form(
-    [Map<String, Object?>? o],
-  ) async {
+  Future<void> form([Map<String, Object?>? o]) async {
     final n = TextEditingController(
       text: o == null ? '' : o['name'] as String,
     );
