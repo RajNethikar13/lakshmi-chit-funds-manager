@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cross_file/cross_file.dart';
+import 'package:excel/excel.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'db.dart';
 
@@ -7,6 +11,167 @@ String money(num n) => '₹${NumberFormat('#,##,##0').format(n)}';
 
 String fmtDate(String s) =>
     DateFormat('dd MMM yyyy').format(DateTime.parse(s));
+
+
+CellValue excelValue(Object? value) {
+  if (value == null) return TextCellValue('');
+  if (value is int) return IntCellValue(value);
+  if (value is double) return DoubleCellValue(value);
+  if (value is num) return DoubleCellValue(value.toDouble());
+  if (value is bool) return BoolCellValue(value);
+  return TextCellValue(value.toString());
+}
+
+String excelText(Data? cell) {
+  final value = cell?.value;
+  if (value == null) return '';
+  if (value is TextCellValue) return value.value.text ?? '';
+  if (value is IntCellValue) return '${value.value}';
+  if (value is DoubleCellValue) return '${value.value}';
+  if (value is BoolCellValue) return '${value.value}';
+  if (value is DateCellValue) {
+    return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+  }
+  if (value is DateTimeCellValue) return value.asDateTimeLocal().toIso8601String();
+  if (value is TimeCellValue) return value.toString();
+  if (value is FormulaCellValue) return value.formula;
+  return value.toString();
+}
+
+int excelInt(Data? cell, [int fallback = 0]) {
+  final text = excelText(cell).trim();
+  return int.tryParse(text) ?? double.tryParse(text)?.round() ?? fallback;
+}
+
+void addExcelSheet(Excel excel, String name, List<String> headers, List<Map<String, Object?>> rows) {
+  final sheet = excel[name];
+  sheet.appendRow(headers.map(excelValue).toList());
+  for (final row in rows) {
+    sheet.appendRow(headers.map((h) => excelValue(row[h])).toList());
+  }
+  for (var i = 0; i < headers.length; i++) {
+    sheet.setColumnWidth(i, 18);
+  }
+}
+
+Future<void> exportExcel(BuildContext context, String scope) async {
+  try {
+    final data = await AppDb.instance.backupData();
+    final excel = Excel.createExcel();
+
+    final info = excel['Sheet1'];
+    info.appendRow([TextCellValue('Lakshmi Chit Manager')]);
+    info.appendRow([TextCellValue('Export type'), TextCellValue(scope)]);
+    info.appendRow([TextCellValue('Exported at'), TextCellValue(DateTime.now().toIso8601String())]);
+
+    if (scope == 'Full Backup' || scope == 'Groups' || scope == 'Members') {
+      addExcelSheet(excel, 'Templates', ['id','name','months','members','installment','due_day','max_payout'], data['templates'] ?? []);
+      addExcelSheet(excel, 'Groups', ['id','name','template_id','start_date'], data['groups_tbl'] ?? []);
+    }
+    if (scope == 'Full Backup' || scope == 'Groups' || scope == 'Members') {
+      addExcelSheet(excel, 'Members', ['id','name','mobile','address','group_id','member_no','lift_month','lift_amount','lift_date'], data['members'] ?? []);
+      addExcelSheet(excel, 'Payments', ['id','member_id','month_no','due_amount','paid_amount','paid_date','status','mode','notes'], data['payments'] ?? []);
+      addExcelSheet(excel, 'Ledger', ['id','type','amount','date','member_id','group_id','category','notes'], data['ledger'] ?? []);
+    }
+    if (scope == 'Full Backup' || scope == 'Schemes') {
+      addExcelSheet(excel, 'Templates', ['id','name','months','members','installment','due_day','max_payout'], data['templates'] ?? []);
+      if (scope == 'Schemes') {
+        addExcelSheet(excel, 'Groups', ['id','name','template_id','start_date'], data['groups_tbl'] ?? []);
+      }
+    }
+
+    if (scope == 'Analysis') {
+      final a = await AppDb.instance.analysis(period: 'Yearly', year: DateTime.now().year);
+      addExcelSheet(excel, 'Analysis', ['metric','amount'], [
+        {'metric':'Total received','amount':a['received'] ?? 0},
+        {'metric':'Total given out','amount':a['given'] ?? 0},
+        {'metric':'Cash movement','amount':a['net'] ?? 0},
+        {'metric':'Outstanding installments','amount':a['outstanding'] ?? 0},
+      ]);
+      final profits = await AppDb.instance.completedGroupProfits();
+      addExcelSheet(excel, 'Group Profit', ['group','scheme','start_date','end_date','received','given_out','profit','completed'], profits);
+    }
+
+    final bytes = excel.encode();
+    if (bytes == null) throw Exception('Could not create Excel file.');
+
+    final safe = scope.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    final name = 'lakshmi_chit_${safe}_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.xlsx';
+    await Share.shareXFiles(
+      [XFile.fromData(bytes, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+      text: 'Lakshmi Chit Manager - $scope',
+      fileNameOverrides: [name],
+    );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Excel export failed: $e')));
+    }
+  }
+}
+
+Future<void> importExcel(BuildContext context) async {
+  try {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+      allowMultiple: false,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final bytes = result.files.first.bytes;
+    if (bytes == null) throw Exception('The selected file could not be read.');
+
+    final excel = Excel.decodeBytes(bytes);
+    final requiredSheets = ['Templates', 'Groups', 'Members', 'Payments', 'Ledger'];
+    for (final name in requiredSheets) {
+      if (!excel.tables.containsKey(name)) {
+        throw Exception('This is not a Lakshmi Chit full backup. Missing sheet: $name');
+      }
+    }
+
+    List<Map<String, Object?>> readSheet(String name) {
+      final sheet = excel.tables[name]!;
+      if (sheet.rows.isEmpty) return [];
+      final headers = sheet.rows.first.map(excelText).toList();
+      return sheet.rows.skip(1).where((r) => r.any((c) => excelText(c).trim().isNotEmpty)).map((r) {
+        final out = <String, Object?>{};
+        for (var i = 0; i < headers.length; i++) {
+          final h = headers[i];
+          if (h.isEmpty) continue;
+          final value = excelText(i < r.length ? r[i] : null);
+          out[h] = value.isEmpty ? null : value;
+        }
+        return out;
+      }).toList();
+    }
+
+    final templates = readSheet('Templates');
+    final groups = readSheet('Groups');
+    final members = readSheet('Members');
+    final payments = readSheet('Payments');
+    final ledger = readSheet('Ledger');
+
+    await AppDb.instance.restoreData({
+      'templates': templates,
+      'groups_tbl': groups,
+      'members': members,
+      'payments': payments,
+      'ledger': ledger,
+    });
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Backup restored successfully.')),
+      );
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Restore failed: $e')));
+    }
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -187,6 +352,26 @@ class _Dashboard extends State<Dashboard> {
                 'Open details, edit or delete records, and mark monthly payments.',
               ),
             ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => exportExcel(c, 'Full Backup'),
+                  icon: const Icon(Icons.download),
+                  label: const Text('Full Excel Backup'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => importExcel(c),
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('Restore'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -373,10 +558,19 @@ class _Groups extends State<GroupsPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            FilledButton.icon(
-              onPressed: () => form(),
-              icon: const Icon(Icons.add),
-              label: const Text('New Group'),
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Export Excel',
+                  onPressed: () => exportExcel(c, 'Groups'),
+                  icon: const Icon(Icons.download),
+                ),
+                FilledButton.icon(
+                  onPressed: () => form(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('New Group'),
+                ),
+              ],
             ),
           ],
         ),
@@ -730,10 +924,19 @@ class _Members extends State<MembersPage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            FilledButton.icon(
-              onPressed: () => form(),
-              icon: const Icon(Icons.person_add),
-              label: const Text('Add'),
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Export Excel',
+                  onPressed: () => exportExcel(c, 'Members'),
+                  icon: const Icon(Icons.download),
+                ),
+                FilledButton.icon(
+                  onPressed: () => form(),
+                  icon: const Icon(Icons.person_add),
+                  label: const Text('Add'),
+                ),
+              ],
             ),
           ],
         ),
@@ -840,9 +1043,10 @@ class _MemberDetail extends State<MemberDetail> {
       text: '${p == null ? 0 : p['paid_amount']}',
     );
 
-    String mode = p == null
-        ? 'Cash'
-        : p['mode'] as String;
+    String mode = p == null ? 'Cash' : p['mode'] as String;
+    DateTime paidDate = p != null && p['paid_date'] != null
+        ? DateTime.tryParse(p['paid_date'] as String) ?? DateTime.now()
+        : DateTime.now();
 
     final ok = await showDialog<bool>(
       context: context,
@@ -863,6 +1067,21 @@ class _MemberDetail extends State<MemberDetail> {
                 decoration: const InputDecoration(
                   labelText: 'Amount received',
                 ),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Payment date'),
+                subtitle: Text(DateFormat('dd MMM yyyy').format(paidDate)),
+                trailing: const Icon(Icons.calendar_month),
+                onTap: () async {
+                  final z = await showDatePicker(
+                    context: c,
+                    initialDate: paidDate,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2100),
+                  );
+                  if (z != null) s(() => paidDate = z);
+                },
               ),
               DropdownButton<String>(
                 isExpanded: true,
@@ -919,7 +1138,7 @@ class _MemberDetail extends State<MemberDetail> {
         paid: a,
         status: status,
         mode: mode,
-        date: DateTime.now(),
+        date: paidDate,
       );
 
       load();
@@ -1171,129 +1390,58 @@ class _Templates extends State<TemplatesPage> {
 
   Future<void> load() async {
     xs = await AppDb.instance.templates();
-
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
 
   Future<void> form([Map<String, Object?>? o]) async {
-    final n = TextEditingController(
-      text: o == null ? '' : o['name'] as String,
-    );
-
-    final m = TextEditingController(
-      text: '${o == null ? 25 : o['months']}',
-    );
-
-    final mem = TextEditingController(
-      text: '${o == null ? 25 : o['members']}',
-    );
-
-    final i = TextEditingController(
-      text: '${o == null ? 16000 : o['installment']}',
-    );
-
-    final d = TextEditingController(
-      text: '${o == null ? 5 : o['due_day']}',
-    );
+    final n = TextEditingController(text: o == null ? '' : o['name'] as String);
+    final m = TextEditingController(text: '${o == null ? 25 : o['months']}');
+    final mem = TextEditingController(text: '${o == null ? 25 : o['members']}');
+    final i = TextEditingController(text: '${o == null ? 16000 : o['installment']}');
+    final d = TextEditingController(text: '${o == null ? 5 : o['due_day']}');
+    final max = TextEditingController(text: '${o == null ? 500000 : o['max_payout']}');
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: Text(
-          o == null ? 'New Scheme' : 'Edit Scheme',
-        ),
+        title: Text(o == null ? 'New Scheme' : 'Edit Scheme'),
         content: SingleChildScrollView(
           child: Column(
             children: [
-              TextField(
-                controller: n,
-                decoration: const InputDecoration(
-                  labelText: 'Scheme name',
-                ),
-              ),
-              TextField(
-                controller: m,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Months',
-                ),
-              ),
-              TextField(
-                controller: mem,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Members',
-                ),
-              ),
-              TextField(
-                controller: i,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Monthly installment',
-                ),
-              ),
-              TextField(
-                controller: d,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Due day',
-                ),
-              ),
+              TextField(controller: n, decoration: const InputDecoration(labelText: 'Scheme name')),
+              TextField(controller: m, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Months')),
+              TextField(controller: mem, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Members')),
+              TextField(controller: i, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Monthly installment')),
+              TextField(controller: d, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Due day')),
+              TextField(controller: max, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Maximum amount a person receives')),
             ],
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: const Text('Save'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Save')),
         ],
       ),
     );
 
-    if (ok == true) {
-      final a = int.tryParse(m.text) ?? 25;
-      final b = int.tryParse(mem.text) ?? 25;
-      final cx = int.tryParse(i.text) ?? 16000;
-      final e = int.tryParse(d.text) ?? 5;
-
+    if (ok == true && n.text.trim().isNotEmpty) {
+      final months = int.tryParse(m.text) ?? 25;
+      final members = int.tryParse(mem.text) ?? 25;
+      final installment = int.tryParse(i.text) ?? 16000;
+      final due = int.tryParse(d.text) ?? 5;
+      final maxPayout = int.tryParse(max.text) ?? 0;
       if (o == null) {
-        await AppDb.instance.addTemplate(
-          n.text,
-          a,
-          b,
-          cx,
-          e,
-        );
+        await AppDb.instance.addTemplate(n.text.trim(), months, members, installment, due, maxPayout);
       } else {
-        await AppDb.instance.updateTemplate(
-          o['id'] as int,
-          n.text,
-          a,
-          b,
-          cx,
-          e,
-        );
+        await AppDb.instance.updateTemplate(o['id'] as int, n.text.trim(), months, members, installment, due, maxPayout);
       }
-
       load();
     }
   }
 
-  Future<void> del(
-    Map<String, Object?> o,
-  ) async {
+  Future<void> del(Map<String, Object?> o) async {
     try {
-      await AppDb.instance.deleteTemplate(
-        o['id'] as int,
-      );
-
+      await AppDb.instance.deleteTemplate(o['id'] as int);
       load();
     } catch (e) {
       if (mounted) {
@@ -1301,18 +1449,8 @@ class _Templates extends State<TemplatesPage> {
           context: context,
           builder: (c) => AlertDialog(
             title: const Text('Cannot delete'),
-            content: Text(
-              e.toString().replaceFirst(
-                    'Exception: ',
-                    '',
-                  ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(c),
-                child: const Text('OK'),
-              ),
-            ],
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('OK'))],
           ),
         );
       }
@@ -1325,20 +1463,14 @@ class _Templates extends State<TemplatesPage> {
       padding: const EdgeInsets.all(12),
       children: [
         Row(
-          mainAxisAlignment:
-              MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Saved Schemes',
-              style: TextStyle(
-                fontSize: 27,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            FilledButton.icon(
-              onPressed: () => form(),
-              icon: const Icon(Icons.add),
-              label: const Text('New'),
+            const Text('Saved Schemes', style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold)),
+            Row(
+              children: [
+                IconButton(tooltip: 'Export Excel', onPressed: () => exportExcel(c, 'Schemes'), icon: const Icon(Icons.download)),
+                FilledButton.icon(onPressed: () => form(), icon: const Icon(Icons.add), label: const Text('New')),
+              ],
             ),
           ],
         ),
@@ -1347,30 +1479,18 @@ class _Templates extends State<TemplatesPage> {
             child: ListTile(
               title: Text(x['name'] as String),
               subtitle: Text(
-                '${x['months']} months • '
-                '${x['members']} members • '
-                '${money(x['installment'] as int)}/month • '
-                'Due ${x['due_day']}',
+                '${x['months']} months • ${x['members']} members • ${money(x['installment'] as int)}/month • Due ${x['due_day']}\n'
+                'Maximum payout per person: ${money((x['max_payout'] as int?) ?? 0)}',
               ),
+              isThreeLine: true,
               trailing: PopupMenuButton<String>(
                 onSelected: (v) {
-                  if (v == 'e') {
-                    form(x);
-                  }
-
-                  if (v == 'd') {
-                    del(x);
-                  }
+                  if (v == 'e') form(x);
+                  if (v == 'd') del(x);
                 },
                 itemBuilder: (_) => const [
-                  PopupMenuItem(
-                    value: 'e',
-                    child: Text('Edit'),
-                  ),
-                  PopupMenuItem(
-                    value: 'd',
-                    child: Text('Delete'),
-                  ),
+                  PopupMenuItem(value: 'e', child: Text('Edit')),
+                  PopupMenuItem(value: 'd', child: Text('Delete')),
                 ],
               ),
             ),
@@ -1381,69 +1501,173 @@ class _Templates extends State<TemplatesPage> {
   }
 }
 
-class AnalysisPage extends StatelessWidget {
+class AnalysisPage extends StatefulWidget {
   const AnalysisPage({super.key});
 
   @override
-  Widget build(BuildContext c) {
-    return FutureBuilder<Map<String, int>>(
-      future: AppDb.instance.dashboard(),
-      builder: (c, s) {
-        final d = s.data ?? {};
-        final net =
-            (d['received'] ?? 0) -
-            (d['given'] ?? 0);
+  State<AnalysisPage> createState() => _Analysis();
+}
 
-        return ListView(
-          padding: const EdgeInsets.all(12),
+class _Analysis extends State<AnalysisPage> {
+  String period = 'Yearly';
+  int year = DateTime.now().year;
+  int? month;
+  int? quarter;
+  int? groupId;
+  int? templateId;
+  List<Map<String, Object?>> groups = [];
+  List<Map<String, Object?>> templates = [];
+  Map<String, int> d = {};
+  List<Map<String, Object?>> profits = [];
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    groups = await AppDb.instance.groups();
+    templates = await AppDb.instance.templates();
+    d = await AppDb.instance.analysis(
+      period: period,
+      year: year,
+      month: month,
+      quarter: quarter,
+      groupId: groupId,
+      templateId: templateId,
+    );
+    profits = await AppDb.instance.completedGroupProfits(
+      groupId: groupId,
+      templateId: templateId,
+    );
+    if (mounted) setState(() {});
+  }
+
+  void refresh() => load();
+
+  @override
+  Widget build(BuildContext c) {
+    final net = d['net'] ?? 0;
+    final years = List<int>.generate(7, (i) => DateTime.now().year - 2 + i);
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Business Analysis',
-              style: TextStyle(
-                fontSize: 27,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Card(
-              child: ListTile(
-                title: const Text('Total received'),
-                trailing: Text(
-                  money(d['received'] ?? 0),
-                ),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                title: const Text('Total given out'),
-                trailing: Text(
-                  money(d['given'] ?? 0),
-                ),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                title: const Text('Cash movement'),
-                subtitle: const Text(
-                  'Received minus payouts; not final accounting profit.',
-                ),
-                trailing: Text(
-                  money(net),
-                ),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                title: const Text(
-                  'Outstanding installments',
-                ),
-                trailing: Text(
-                  money(d['outstanding'] ?? 0),
-                ),
-              ),
-            ),
+            const Text('Business Analysis', style: TextStyle(fontSize: 27, fontWeight: FontWeight.bold)),
+            IconButton(tooltip: 'Export Excel', onPressed: () => exportExcel(c, 'Analysis'), icon: const Icon(Icons.download)),
           ],
-        );
-      },
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                DropdownButtonFormField<String>(
+                  value: period,
+                  decoration: const InputDecoration(labelText: 'Period'),
+                  items: const ['Monthly', 'Quarterly', 'Yearly']
+                      .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) {
+                      setState(() {
+                        period = v;
+                        month = period == 'Monthly' ? (month ?? DateTime.now().month) : null;
+                        quarter = period == 'Quarterly' ? (quarter ?? ((DateTime.now().month - 1) ~/ 3 + 1)) : null;
+                      });
+                      refresh();
+                    }
+                  },
+                ),
+                DropdownButtonFormField<int>(
+                  value: year,
+                  decoration: const InputDecoration(labelText: 'Year'),
+                  items: years.map((x) => DropdownMenuItem(value: x, child: Text('$x'))).toList(),
+                  onChanged: (v) {
+                    if (v != null) {
+                      setState(() => year = v);
+                      refresh();
+                    }
+                  },
+                ),
+                if (period == 'Monthly')
+                  DropdownButtonFormField<int>(
+                    value: month,
+                    decoration: const InputDecoration(labelText: 'Month'),
+                    items: List.generate(12, (i) => i + 1).map((x) => DropdownMenuItem(value: x, child: Text(DateFormat('MMMM').format(DateTime(2000, x, 1))))).toList(),
+                    onChanged: (v) {
+                      setState(() => month = v);
+                      refresh();
+                    },
+                  ),
+                if (period == 'Quarterly')
+                  DropdownButtonFormField<int>(
+                    value: quarter,
+                    decoration: const InputDecoration(labelText: 'Quarter'),
+                    items: const [1, 2, 3, 4].map((x) => DropdownMenuItem(value: x, child: Text('Q$x'))).toList(),
+                    onChanged: (v) {
+                      setState(() => quarter = v);
+                      refresh();
+                    },
+                  ),
+                DropdownButtonFormField<int?>(
+                  value: groupId,
+                  decoration: const InputDecoration(labelText: 'Group'),
+                  items: [
+                    const DropdownMenuItem<int?>(value: null, child: Text('All groups')),
+                    ...groups.map((g) => DropdownMenuItem<int?>(value: g['id'] as int, child: Text(g['name'] as String))),
+                  ],
+                  onChanged: (v) {
+                    setState(() => groupId = v);
+                    refresh();
+                  },
+                ),
+                DropdownButtonFormField<int?>(
+                  value: templateId,
+                  decoration: const InputDecoration(labelText: 'Scheme'),
+                  items: [
+                    const DropdownMenuItem<int?>(value: null, child: Text('All schemes')),
+                    ...templates.map((t) => DropdownMenuItem<int?>(value: t['id'] as int, child: Text(t['name'] as String))),
+                  ],
+                  onChanged: (v) {
+                    setState(() => templateId = v);
+                    refresh();
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        Card(child: ListTile(title: const Text('Total received'), trailing: Text(money(d['received'] ?? 0)))),
+        Card(child: ListTile(title: const Text('Total given out'), trailing: Text(money(d['given'] ?? 0)))),
+        Card(child: ListTile(title: const Text('Cash movement'), subtitle: const Text('Received minus payouts for the selected period.'), trailing: Text(money(net)))),
+        Card(child: ListTile(title: const Text('Outstanding installments'), trailing: Text(money(d['outstanding'] ?? 0)))),
+        const SizedBox(height: 8),
+        const Text('Completed Group Profit', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        if (profits.isEmpty)
+          const Card(child: ListTile(title: Text('No completed groups for the selected filters.'))),
+        ...profits.map(
+          (p) => Card(
+            child: ListTile(
+              title: Text('${p['group']} • ${p['scheme']}'),
+              subtitle: Text('Completed: ${p['end_date']}\nReceived ${money(p['received'] as int)} • Given out ${money(p['given_out'] as int)}'),
+              trailing: Text(money(p['profit'] as int), style: TextStyle(fontWeight: FontWeight.bold, color: (p['profit'] as int) >= 0 ? Colors.green : Colors.red)),
+            ),
+          ),
+        ),
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('Profit rule'),
+            subtitle: Text('Final group profit is calculated only after the group reaches its scheduled end date: total member payments received minus chit payouts given to that group.'),
+          ),
+        ),
+      ],
     );
   }
 }
